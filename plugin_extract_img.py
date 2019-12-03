@@ -13,7 +13,7 @@ Use at your own risk
 This plugin will attempt to extract image and hash it
 
 Usage:
-$ python oledump.py ../test_docs/image_in_doc.doc -p extract_img_plugin.py --pluginoptions save=../test_docs/extract_image.jpeg
+$ python oledump.py ../test_docs/image_in_doc.doc -p plugin_extract_img.py --pluginoptions save=../test_docs/extract_image.jpeg
   1:       114 '\x01CompObj'
   2:      4096 '\x05DocumentSummaryInformation'
   3:      4096 '\x05SummaryInformation'
