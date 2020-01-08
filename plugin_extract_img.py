@@ -2,7 +2,7 @@
 
 __description__ = 'Extract image and hash it plugin for oledump.py'
 __author__ = 'Jon Armer'
-__version__ = '0.0.1'
+__version__ = '0.0.2'
 __date__ = '2019/12/03'
 
 """
@@ -35,10 +35,8 @@ History:
   2019/12/01: start
 
 Todo:
-    - Stop passing ole data as params
     - Add in other shape records
     - Return shape name
-    - Add ability for multiple images
 """
 
 import struct
@@ -48,7 +46,7 @@ from Crypto.Hash import SHA256
 class extract_and_hash_image(cPluginParent):
     macroOnly = False
 
-    name = 'Extract and sha256 hash image plugin. save image with --pluginoptions save=<location>'
+    name = 'Extract and sha256 hash image plugin. save image with --pluginoptions save=<folder_location>'
 
     #  options is a string passed to --pluginoptions.
     def __init__(self, name, stream, options):
@@ -58,6 +56,7 @@ class extract_and_hash_image(cPluginParent):
         self.options = options
         self.save = ""
         self.index = 0
+	self.img_info = [] # TODO make dict when we can parse shape name and other info. 
 
         self.ran = False
 
@@ -65,59 +64,64 @@ class extract_and_hash_image(cPluginParent):
     # This method must return a list of strings: this is the plugin output to be displayed by oledump.
     # This method must also set object property ran to True to have oledump display output for this plugin.
     def Analyze(self):
-        result = ""
+        result = []
+        curindex = 0
 
         for option in self.options.split(','):
             if option.startswith("save"):
+                # check if folder is created
                 self.save = option.split("=")[1]
 
 
         if self.stream and self.streamname == ['Data']:
             while(self.index < len(self.stream)):
-                data_element_size = self.read_dword(self.stream)
-                img_hash = self.parse_PICAndOfficeArtData(self.stream)
-                if img_hash:
-                    self.ran = True
-                    return "sha256 hash is: {}".format(img_hash)
+                curindex = self.index
+                data_element_size = self.read_dword()
+                self.parse_PICAndOfficeArtData(curindex + data_element_size) # could probably make generic classes so we can read and write the records
 
-                self.index += data_element_size - 4
-            
+                self.index = curindex + data_element_size # skip element
+
+            if self.img_info:
+                self.ran = True
+                # for key, val in self.img_info: # when dict
+                for val in self.img_info:
+                    result.append("image sha256 hash is: {}".format(val))
 
         return result
 
     
-    def read_byte(self, ole_stream): 
-        val = ord(ole_stream[self.index])
+    def read_byte(self): 
+        val = ord(self.stream[self.index])
         self.index += 1
         return val
 
-    def read_bytes(self, ole_stream, num):
-        val = ole_stream[self.index:self.index + num]
+    def read_bytes(self, num):
+        val = self.stream[self.index:self.index + num]
         self.index += num
         return val
 
-    def read_sword(self, ole_stream): # could use read bytes, and then do unpacking
-        val = struct.unpack("<h", ole_stream[self.index:self.index + 2])[0]
+    def read_sword(self): # could use read bytes, and then do unpacking
+        val = struct.unpack("<h", self.stream[self.index:self.index + 2])[0]
         self.index += 2
         return val
 
-    def read_sdword(self, ole_stream):
-        val = struct.unpack("<i", ole_stream[self.index:self.index + 4])[0]
+    def read_sdword(self):
+        val = struct.unpack("<i", self.stream[self.index:self.index + 4])[0]
         self.index += 4
         return val
 
-    def read_word(self, ole_stream):
-        val = struct.unpack("<H", ole_stream[self.index:self.index + 2])[0]
+    def read_word(self):
+        val = struct.unpack("<H", self.stream[self.index:self.index + 2])[0]
         self.index += 2
         return val
 
-    def read_dword(self, ole_stream):
-        val = struct.unpack("<I", ole_stream[self.index:self.index + 4])[0]
+    def read_dword(self):
+        val = struct.unpack("<I", self.stream[self.index:self.index + 4])[0]
         self.index += 4
         return val
     
     
-    def parse_OfficeArtRecordHeader(self, ole_stream):
+    def parse_OfficeArtRecordHeader(self):
         '''
         A OfficeArtRecordHeader is 8 bytes and is made up of 
             1 nibble recVer, least significate nibble once ushort has been read
@@ -126,15 +130,15 @@ class extract_and_hash_image(cPluginParent):
             1 uint recLen
         '''
     
-        rec_ver_instance = self.read_word(ole_stream)
-        recType = self.read_word(ole_stream)
-        recLen = self.read_dword(ole_stream)
+        rec_ver_instance = self.read_word()
+        recType = self.read_word()
+        recLen = self.read_dword()
     
         return rec_ver_instance & 0xF, (rec_ver_instance & 0xFFF0) >> 4, recType, recLen
     
     
     
-    def parse_mfpf(self, ole_stream):
+    def parse_mfpf(self):
         '''
         The mfpf struct is 8 bytes and is made up of
             1 ushort mm
@@ -143,15 +147,15 @@ class extract_and_hash_image(cPluginParent):
             1 ushort swHMF
         '''
     
-        mm = self.read_word(ole_stream)
-        xExt = self.read_word(ole_stream)
-        yExt = self.read_word(ole_stream)
-        swHMF = self.read_word(ole_stream)
+        mm = self.read_word()
+        xExt = self.read_word()
+        yExt = self.read_word()
+        swHMF = self.read_word()
         
         return mm, xExt, yExt, swHMF
         
     
-    def parse_innerHeader(self, ole_stream):
+    def parse_innerHeader(self):
         '''
         The innerHeader struct is 14 bytes and is made up of 
             1 uint grf
@@ -160,15 +164,15 @@ class extract_and_hash_image(cPluginParent):
             1 uint padding2
         '''
     
-        grf = self.read_dword(ole_stream)
+        grf = self.read_dword()
         self.index += 4
-        mmPM = self.read_word(ole_stream)
-        # padding2 = struct.unpack("<I", ole_stream.read(4))
+        mmPM = self.read_word()
+        # padding2 = struct.unpack("<I".read(4))
         self.index += 4
     
         return grf, mmPM
         
-    def parse_picmid(self, ole_stream):
+    def parse_picmid(self):
         '''
         The picmid struct is 38 bytes and is made up of
             1 short dxaGoal, initial width of pic in twips. # Why is this signed?
@@ -189,26 +193,26 @@ class extract_and_hash_image(cPluginParent):
             1 ushort dyaReserved3
         '''
     
-        dxaGoal = self.read_sword(ole_stream)
-        dyaGoal = self.read_sword(ole_stream)
-        mx = self.read_word(ole_stream)
-        my = self.read_word(ole_stream)
+        dxaGoal = self.read_sword()
+        dyaGoal = self.read_sword()
+        mx = self.read_word()
+        my = self.read_word()
         self.index += 8
         self.index += 1
-        bpp = self.read_byte(ole_stream)
+        bpp = self.read_byte()
         # can parse Brc80, but haven't added in 
         self.index += 16
-        # above_Brc80 = ole_stream.read(4)
-        # left_Brc80 = ole_stream.read(4)
-        # below_Brc80 = ole_stream.read(4)
-        # right_Brc80 = ole_stream.read(4)
+        # above_Brc80 = self.stream.read(4)
+        # left_Brc80 = self.stream.read(4)
+        # below_Brc80 = self.stream.read(4)
+        # right_Brc80 = self.stream.read(4)
 
         self.index += 4
     
         return dxaGoal, dyaGoal, mx, my, bpp #, above_Brc80, left_Brc80, below_Brc80, right_Brc80
     
     
-    def parse_OfficeArtFBSE(self, ole_stream):
+    def parse_OfficeArtFBSE(self):
         '''
         OfficeArtFBSE is made up of record header and 
             1 byte btWin32
@@ -225,226 +229,114 @@ class extract_and_hash_image(cPluginParent):
             nameData, Unicode NULL terminated string, name of BLIP
             OfficeArtBlip Record [MS-ODRAW] 2.2.23, poss types EMF, WMF, PICT, JPEG, PNG, DIB, TIFF, JPEG
         '''
-        
-        btWin32 = self.read_byte(ole_stream)
-        btMacOS = self.read_byte(ole_stream)
-        md4 = self.read_bytes(ole_stream, 16)
-        tag = self.read_word(ole_stream)
-        blip_size = self.read_dword(ole_stream)
-        cRef = self.read_dword(ole_stream)
+
+        btWin32 = self.read_byte()
+        btMacOS = self.read_byte()
+        md4 = self.read_bytes(16)
+        tag = self.read_word()
+        blip_size = self.read_dword()
+        cRef = self.read_dword()
         self.index += 4 # skip over MSOFO struct
         self.index += 1 # skip over unused1
-        cbName = self.read_byte(ole_stream)
+        cbName = self.read_byte()
         self.index += 2 # skip over unused2 and unused3
         if cbName > 0:
             nameData = self.read_bytes(cbName)
         else:
             nameData = ""
     
-        rec_ver, recInstance, recType, recLen = self.parse_OfficeArtRecordHeader(ole_stream)
+        rec_ver, recInstance, recType, recLen = self.parse_OfficeArtRecordHeader()
         if recType == 0xf01a: 
-            image_data = self.parse_emf(ole_stream, recInstance, recLen)
+            image_data = self.parse_img_type_1(recInstance, recLen)
         elif recType == 0xf01b: 
-            image_data = self.parse_wmf(ole_stream, recInstance, recLen)
+            image_data = self.parse_img_type_1(recInstance, recLen)
         elif recType == 0xf01c: 
-            image_data = self.parse_pict(ole_stream, recInstance, recLen)
+            image_data = self.parse_img_type_1(recInstance, recLen)
         elif recType == 0xf01d or recType == 0xf02a: 
-            image_data = self.parse_jpeg(ole_stream, recInstance, recLen)
+            image_data = self.parse_img_type_2(recInstance, recLen)
         elif recType == 0xf01e:
-            image_data = self.parse_png(ole_stream, recInstance, recLen)
+            image_data = self.parse_img_type_2(recInstance, recLen)
         elif recType == 0xf01f:
-            image_data = self.parse_dib(ole_stream, recInstance, recLen)
+            image_data = self.parse_img_type_2(recInstance, recLen)
         elif recType == 0xf029:
-            image_data = self.parse_tiff(ole_stream, recInstance, recLen)
+            image_data = self.parse_img_type_2(recInstance, recLen)
     
-        if self.save:
-            with open(self.save, "w") as fo:
-                fo.write(image_data)
-
         img_hash = SHA256.new()
         img_hash.update(image_data)
-        return img_hash.hexdigest()
-        
+        self.img_info.append(img_hash.hexdigest())
+
+        if self.save:
+            with open("{}/{}".format(self.save, img_hash.hexdigest()), "w") as fo:
+                fo.write(image_data)
+
     
-    def parse_pict(self, ole_stream, recInstance, recLen): # maybe I should combine emf, wmf, and pict parsers
+        
+    def parse_img_type_1(self, recInstance, recLen):
         '''
-        A PICT record is made up of header and 
+        A EMF, WMF, PICT record is made up of header and 
             16 byte rgbUid1, md4 of uncompressed BLIPFileData
             optional 16 byte rgbUid2
             34 byte OfficeArtMetafileHeader struct
-            PICT data
+            EMF, WMF, PICT data
         '''
         
         recLen -= 50
-        rgbUid1 = self.read_bytes(ole_stream, 16)
-        if recInstance == 0x543:
-            rgbUid2 = self.read_bytes(ole_stream, 16)
+        rgbUid1 = self.read_bytes(16)
+        if recInstance == 0x217 or recInstance == 0x3d5 or recInstance == 0x543:
+            rgbUid2 = self.read_bytes(6)
             recLen -= 16
             
         
-        OfficeArtMetafileHeader = self.read_bytes(ole_stream, 34)
+        OfficeArtMetafileHeader = self.read_bytes(34)
         
-        PICTFileData = self.read_bytes(ole_stream, recLen)
-    
-        return PICTFileData
-    
-        
-    def parse_emf(self, ole_stream, recInstance, recLen):
-        '''
-        A EMF record is made up of header and 
-            16 byte rgbUid1, md4 of uncompressed BLIPFileData
-            optional 16 byte rgbUid2
-            34 byte OfficeArtMetafileHeader struct
-            EMF data
-        '''
-        
-        recLen -= 50
-        rgbUid1 = self.read_bytes(ole_stream, 16)
-        if recInstance == 0x3d5:
-            rgbUid2 = self.read_bytes(ole_stream, 16)
-            recLen -= 16
-            
-        
-        OfficeArtMetafileHeader = self.read_bytes(ole_stream, 34)
-        
-        EMFFileData = self.read_bytes(ole_stream, recLen)
+        EMFFileData = self.read_bytes(recLen)
     
         return EMFFileData
         
     
-    def parse_wmf(self, ole_stream, recInstance, recLen):
-        '''
-        A WMF record is made up of header and 
-            16 byte rgbUid1, md4 of uncompressed BLIPFileData
-            optional 16 byte rgbUid2
-            34 byte OfficeArtMetafileHeader struct
-            WMF data
-        '''
-        
-        recLen -= 50
-        rgbUid1 = self.read_bytes(ole_stream, 16)
-        if recInstance == 0x217:
-            rgbUid2 = self.read_bytes(ole_stream, 16)
-            recLen -= 16
-            
-        
-        OfficeArtMetafileHeader = self.read_bytes(ole_stream, 34)
-        
-        WMFFileData = self.read_bytes(ole_stream, recLen)
     
-        return WMFFileData
-    
-    
-    def parse_png(self, ole_stream, recInstance, recLen):
+    def parse_img_type_2(self, recInstance, recLen):
         '''
-        A PNG record is made up of header and 
+        A PNG, JPEG, DIB, TIFF record is made up of header and 
             16 byte rgbUid1, md4 of uncompressed BLIPFileData
             optional 16 byte rgbUid2
             1 byte tag
-            PNG data
+            PNG, JPEG, DIB, TIFF data
         '''
         
         recLen -= 17 # recLen includes bytes and rgbUid1, need to remove these from the count
-        rgbUid1 = self.read_bytes(ole_stream, 16)
-        if recInstance == 0x6e1:
-            rgbUid2 = self.read_bytes(ole_stream, 16)
+        rgbUid1 = self.read_bytes(16)
+        if recInstance == 0x46b or recInstance == 0x6e1 or recInstance == 0x6e3 or recInstance == 0x6e5 or recInstance == 0x7a9: 
+            rgbUid2 = self.read_bytes(16)
             recLen -= 16
             
         
-        tag = self.read_byte(ole_stream)
+        tag = self.read_byte()
         
-        BLIPFileData = self.read_bytes(ole_stream, recLen)
+        BLIPFileData = self.read_bytes(recLen)
     
         return BLIPFileData
         
     
-    def parse_jpeg(self, ole_stream, recInstance, recLen):
-        '''
-        A JPEG record is made up of header and 
-            16 byte rgbUid1, md4 of uncompressed BLIPFileData
-            optional 16 byte rgbUid2
-            1 byte tag
-            JPEG data
-        '''
-        
-        recLen -= 17 # recLen includes bytes and rgbUid1, need to remove these from the count
-        rgbUid1 = self.read_bytes(ole_stream, 16)
-        if recInstance == 0x46b or recInstance == 0x6e3:
-            rgbUid2 = self.read_bytes(ole_stream, 16)
-            recLen -= 16
-            
-        
-        tag = self.read_byte(ole_stream)
-        
-        JPEGFileData = self.read_bytes(ole_stream, recLen)
     
-        return JPEGFileData
-        
-    
-    def parse_dib(self, ole_stream, recInstance, recLen):
-        '''
-        A DIB record is made up of header and 
-            16 byte rgbUid1, md4 of uncompressed BLIPFileData
-            optional 16 byte rgbUid2
-            1 byte tag
-            DIB data
-        '''
-        
-        recLen -= 17 # recLen includes bytes and rgbUid1, need to remove these from the count
-        rgbUid1 = self.read_bytes(ole_stream, 16)
-        if recInstance == 0x7a9:
-            rgbUid2 = self.read_bytes(ole_stream, 16)
-            recLen -= 16
-            
-        
-        tag = self.read_byte(ole_stream)
-        
-        DIBFileData = self.read_bytes(ole_stream, recLen)
-    
-        return DIBFileData
-    
-    
-    def parse_tiff(self, ole_stream, recInstance, recLen):
-        '''
-        A TIFF record is made up of header and 
-            16 byte rgbUid1, md4 of uncompressed BLIPFileData
-            optional 16 byte rgbUid2
-            1 byte tag
-            TIFF data
-        '''
-        
-        recLen -= 17 # recLen includes bytes and rgbUid1, need to remove these from the count
-        rgbUid1 = self.read_bytes(ole_stream, 16)
-        if recInstance == 0x6e5:
-            rgbUid2 = self.read_bytes(ole_stream, 16)
-            recLen -= 16
-            
-        
-        tag = self.read_byte(ole_stream)
-        
-        TIFFFileData = self.read_bytes(ole_stream, recLen)
-    
-        return TIFFFileData
-    
-    
-    def parse_PICAndOfficeArtData(self, ole_stream):
-        # already read lcp, lcp = self.read_dword(ole_stream)
-        cbHeader = self.read_word(ole_stream)
+    def parse_PICAndOfficeArtData(self, stream_end):
+        # already read lcp, lcp = self.read_dword()
+        cbHeader = self.read_word()
         if cbHeader != 0x44:
             return ""
     
         # parse mfpf struct
-        mfpf_mm, _, _, _ = self.parse_mfpf(ole_stream)
+        mfpf_mm, _, _, _ = self.parse_mfpf()
         if mfpf_mm != 0x64 and mfpf_mm != 0x66: # must be 64 MM_SHAPE or 66_SHAPEFILE
             return "" # should I return more?
     
         # parse innerHeader
-        _, _ = self.parse_innerHeader(ole_stream)
+        _, _ = self.parse_innerHeader()
 
         # parse picmid struct
-        dxaGoal, dyaGoal, mx, my, bpp = self.parse_picmid(ole_stream) # , above_Brc80, left_Brc80, below_Brc80, right_Brc80 
+        dxaGoal, dyaGoal, mx, my, bpp = self.parse_picmid() # , above_Brc80, left_Brc80, below_Brc80, right_Brc80 
 
-        cProps = self.read_word(ole_stream)
+        cProps = self.read_word()
         if cProps != 0:
             return ""
     
@@ -454,8 +346,8 @@ class extract_and_hash_image(cPluginParent):
             pass
     
         # believe we can just read records as they go
-        while(self.index < len(ole_stream)):
-            rec_ver, rec_instance, recType, recLen = self.parse_OfficeArtRecordHeader(ole_stream)
+        while(self.index < stream_end):
+            rec_ver, rec_instance, recType, recLen = self.parse_OfficeArtRecordHeader()
             if recType == 0xf004:
                 self.index += recLen
                 pass # this record contains shape records, but the records all contain the sam type of header
@@ -489,7 +381,7 @@ class extract_and_hash_image(cPluginParent):
                 pass # TODO
                 
             elif recType == 0xf007:
-                return self.parse_OfficeArtFBSE(ole_stream)
+                self.parse_OfficeArtFBSE()
 
             else:
                 self.index += recLen
